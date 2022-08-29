@@ -5,7 +5,7 @@
 
 use embedded_hal as hal;
 
-use hal::blocking::spi::Write;
+use hal::blocking::spi::WriteIter;
 use hal::spi::{Mode, Phase, Polarity};
 
 use core::marker::PhantomData;
@@ -35,7 +35,7 @@ pub struct Ws2812<'a, SPI, DEVICE = devices::Ws2812> {
 
 impl<'a, SPI, E> Ws2812<'a, SPI>
 where
-    SPI: Write<u8, Error = E>,
+    SPI: WriteIter<u8, Error = E>,
 {
     /// Use ws2812 devices via spi
     ///
@@ -60,7 +60,7 @@ where
 
 impl<'a, SPI, E> Ws2812<'a, SPI, devices::Sk6812w>
 where
-    SPI: Write<u8, Error = E>,
+    SPI: WriteIter<u8, Error = E>,
 {
     /// Use sk6812w devices via spi
     ///
@@ -87,7 +87,7 @@ where
 
 impl<'a, SPI, D, E> Ws2812<'a, SPI, D>
 where
-    SPI: Write<u8, Error = E>,
+    SPI: WriteIter<u8, Error = E>,
 {
     /// Write a single byte for ws2812 devices
     fn write_byte(&mut self, mut data: u8) {
@@ -107,25 +107,32 @@ where
         // We introduce an offset in the fifo here, so there's always one byte in transit
         // Some MCUs (like the stm32f1) only a one byte fifo, which would result
         // in overrun error if two bytes need to be stored
-        self.spi.write(&[0; 1])?;
-        if cfg!(feature = "mosi_idle_high") {
-            self.flush()?;
-        }
-        self.spi.write(&self.data[..self.index])?;
-        self.flush()
+        self.spi.write_iter(
+            core::iter::once(0)
+                .chain(Self::pre_flush())
+                .chain(self.data[..self.index].iter().cloned())
+                .chain(Self::flush()),
+        )
     }
 
-    fn flush(&mut self) -> Result<(), E> {
-        for _ in 0..140 {
-            self.spi.write(&[0; 1])?;
-        }
-        Ok(())
+    #[cfg(feature = "mosi_idle_high")]
+    fn pre_flush() -> impl Iterator<Item = u8> {
+        core::iter::repeat(0).take(140)
+    }
+
+    #[cfg(not(feature = "mosi_idle_high"))]
+    fn pre_flush() -> impl Iterator<Item = u8> {
+        core::iter::empty()
+    }
+
+    fn flush() -> impl Iterator<Item = u8> {
+        core::iter::repeat(0).take(140)
     }
 }
 
 impl<'a, SPI, E> SmartLedsWrite for Ws2812<'a, SPI>
 where
-    SPI: Write<u8, Error = E>,
+    SPI: WriteIter<u8, Error = E>,
 {
     type Error = E;
     type Color = RGB8;
@@ -149,7 +156,7 @@ where
 
 impl<'a, SPI, E> SmartLedsWrite for Ws2812<'a, SPI, devices::Sk6812w>
 where
-    SPI: Write<u8, Error = E>,
+    SPI: WriteIter<u8, Error = E>,
 {
     type Error = E;
     type Color = RGBW<u8, u8>;
